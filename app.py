@@ -51,6 +51,7 @@ def get_portfolio_price(tickers_str, start):
         if df.empty: return None
         close = df["Close"]
         if isinstance(close, pd.DataFrame):
+            # 處理多標的等權重
             portfolio_price = (1 + close.pct_change().mean(axis=1)).cumprod()
             return portfolio_price.dropna()
         return close.dropna()
@@ -59,16 +60,21 @@ def get_portfolio_price(tickers_str, start):
 # ─── 執行回測 ────────────────────────────────────────────────────────────────
 if run_btn:
     with st.spinner("正在計算數據與生成解說..."):
-        sp500 = get_portfolio_price("^GSPC", start_year)
+        # 標普500指數基準
+        sp500_raw = yf.download("^GSPC", start=f"{start_year}-01-01", progress=False, auto_adjust=True)["Close"]
+        if isinstance(sp500_raw, pd.DataFrame): sp500_raw = sp500_raw.iloc[:, 0]
+        
+        # 投資組合
         portfolio = get_portfolio_price(ticker_input, start_year)
 
-    if sp500 is None or portfolio is None:
+    if sp500_raw is None or portfolio is None:
         st.error("讀取失敗，請確認代號正確。")
         st.stop()
 
-    rolling_high = sp500.rolling(window=lookback_window).max()
-    drawdown = (sp500 - rolling_high) / rolling_high * 100
-    signals = sp500.index[(drawdown <= -drop_pct) & (drawdown.shift(1) > -drop_pct)]
+    # 計算訊號
+    rolling_high = sp500_raw.rolling(window=lookback_window).max()
+    drawdown = (sp500_raw - rolling_high) / rolling_high * 100
+    signals = sp500_raw.index[(drawdown <= -drop_pct) & (drawdown.shift(1) > -drop_pct)]
 
     results = []
     for d in signals:
@@ -88,7 +94,7 @@ if run_btn:
     df_res = pd.DataFrame(results)
 
     if df_res.empty:
-        st.warning("此條件下無任何訊號。")
+        st.warning("⚠️ 此條件下歷史上沒有觸發任何買入訊號。")
     else:
         st.markdown(f'<div class="result-header">📊 分析標的：{ticker_input} ｜ 歷史觸發次數：{len(df_res)} 次</div>', unsafe_allow_html=True)
 
@@ -105,50 +111,45 @@ if run_btn:
                 cards_html += f'<div class="mcard"><div class="mcard-label">{p}</div><div class="mcard-value {cls}">{avg:+.1f}%</div><div class="mcard-sub">勝率 {wr:.0f}%</div></div>'
         st.markdown(cards_html + '</div>', unsafe_allow_html=True)
 
+        df_stats = pd.DataFrame(stats_list)
+
         # ── 2. 勝率進化圖 ──
         st.subheader("🎯 持有時間與賺錢機率關係圖")
-        df_stats = pd.DataFrame(stats_list)
         fig_wr = go.Figure()
         fig_wr.add_trace(go.Scatter(x=df_stats["持有期"], y=df_stats["勝率"], mode='lines+markers+text', text=[f"{v:.0f}%" for v in df_stats["勝率"]], textposition="top center", line=dict(color='#34d399', width=4)))
-        fig_wr.update_layout(template="plotly_dark", height=350, yaxis=dict(range=[0, 110]))
+        fig_wr.update_layout(template="plotly_dark", height=350, yaxis=dict(range=[0, 110], title="勝率 (%)"))
         st.plotly_chart(fig_wr, use_container_width=True)
 
-        # ── 3. 自動生成的回測解說 (核心亮點) ──
+        # ── 3. 自動生成的績效解說 ──
         st.subheader("💡 投資績效深度解說")
         
-        # 邏輯判斷
-        best_period = df_stats.iloc[df_stats['平均報酬'].idxmax()]
-        safe_period = df_stats[df_stats['勝率'] >= 85].iloc[0] if any(df_stats['勝_率'] >= 85) else None
+        # 邏輯判斷修正
+        best_row = df_stats.loc[df_stats['平均報酬'].idxmax()]
+        safe_df = df_stats[df_stats['勝率'] >= 85]
+        safe_period_text = f"持有至少 <b>{safe_df.iloc[0]['持有期']}</b>" if not safe_df.empty else "目前組合在各期勝率尚未達到 85% 的絕對穩健水位"
         worst_loss = df_stats['最低'].min()
         
         commentary = f"""
         <div class="commentary-box">
         <b>1. 總體評價：</b><br>
-        自 {start_year} 年以來，當 S&P 500 下跌 {drop_pct}% 時，買入這個組合的表現相當
-        {"優秀，長線具有極高勝算" if best_period['平均報酬'] > 20 else "穩健，適合資產配置"}。
-        在歷史上共出現過 {len(df_res)} 次機會。<br><br>
+        自 {start_year} 年以來，當 S&P 500 下跌 {drop_pct}% 時，買入 <b>{ticker_input}</b> 組合。
+        歷史上共出現過 {len(df_res)} 次進場機會，長線平均表現為 <b>{best_row['平均報酬']:+.1f}%</b>。<br><br>
         
         <b>2. 勝率關鍵轉折點：</b><br>
-        觀察勝率圖，買入後{"賺錢機率隨時間穩定爬升" if df_stats['勝率'].iloc[-1] > df_stats['勝率'].iloc[0] else "勝率變化波動較大"}。
-        """
-        if safe_period is not None:
-            commentary += f"如果你追求高度安全性，<b>持有至少 {safe_period['持有期']}</b> 後，勝率將來到 {safe_period['勝率']:.0f}%，這是一個非常關鍵的心理防線。"
-        else:
-            commentary += "目前組合在各持有期的勝率尚未達到 85% 的絕對穩健水位，建議分批進場。"
-            
-        commentary += f"""<br><br>
-        <b>3. 風險預警：</b><br>
-        回測中最慘的一次紀錄是在短線出現過 <b>{worst_loss:+.1f}%</b> 的跌幅。這告訴我們，即便是在回檔後買入，
-        短期內仍可能面臨陣痛期，但隨著持有時間拉長至 3-5 年，最低報酬已提升至 {df_stats.iloc[-1]['最低']:+.1f}%，顯示時間能有效稀釋風險。<br><br>
+        {safe_period_text}，在此之後賺錢的機率將大幅提升。這說明了長線投資能有效抵禦市場回檔時的恐慌。<br><br>
         
-        <b>4. 執行建議：</b><br>
-        本組合的最優持有期為 <b>{best_period['持有期']}</b>，預期平均報酬約為 <b>{best_period['平均報酬']:+.1f}%</b>。
-        建議投資人若在標普回檔買入後，應保持耐心，避免在 6 個月內的波動中恐慌出場。
+        <b>3. 風險預警：</b><br>
+        回測顯示，最極端的情況下（通常是買入後市場繼續探底），短期曾面臨 <b>{worst_loss:+.1f}%</b> 的虧損。
+        然而，隨著持有時間拉長到 5 年，最低報酬已變更為 {df_stats.iloc[-1]['最低']:+.1f}%，證明了時間是風險的最佳稀釋劑。<br><br>
+        
+        <b>4. 結論建議：</b><br>
+        本組合表現最亮眼的持有期為 <b>{best_row['持有期']}</b>。建議投資人在觸發訊號後，應以此時間長度為目標進行配置，
+        不要因為 1~3 個月內的短期震盪而放棄長線獲利的機會。
         </div>
         """
         st.markdown(commentary, unsafe_allow_html=True)
 
-        # ── 4. 詳細對照表 ──
+        # ── 4. 數據總表 ──
         st.subheader("📋 數據對照總表")
         display_df = df_stats.copy()
         display_df["平均報酬"] = display_df["平均報酬"].map("{:+.1f}%".format)
@@ -157,4 +158,4 @@ if run_btn:
         st.table(display_df[["持有期", "樣本數", "平均報酬", "勝率", "最低"]])
 
 else:
-    st.info("👈 設定左側參數後，點擊「開始分析」")
+    st.info("👈 設定參數後，點擊左側「開始分析並生成解說」按鈕。")
