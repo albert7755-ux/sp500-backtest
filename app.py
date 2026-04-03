@@ -51,7 +51,6 @@ def get_portfolio_price(tickers_str, start):
         if df.empty: return None
         close = df["Close"]
         if isinstance(close, pd.DataFrame):
-            # 處理多標的等權重
             portfolio_price = (1 + close.pct_change().mean(axis=1)).cumprod()
             return portfolio_price.dropna()
         return close.dropna()
@@ -60,18 +59,14 @@ def get_portfolio_price(tickers_str, start):
 # ─── 執行回測 ────────────────────────────────────────────────────────────────
 if run_btn:
     with st.spinner("正在計算數據與生成解說..."):
-        # 標普500指數基準
         sp500_raw = yf.download("^GSPC", start=f"{start_year}-01-01", progress=False, auto_adjust=True)["Close"]
         if isinstance(sp500_raw, pd.DataFrame): sp500_raw = sp500_raw.iloc[:, 0]
-        
-        # 投資組合
         portfolio = get_portfolio_price(ticker_input, start_year)
 
     if sp500_raw is None or portfolio is None:
         st.error("讀取失敗，請確認代號正確。")
         st.stop()
 
-    # 計算訊號
     rolling_high = sp500_raw.rolling(window=lookback_window).max()
     drawdown = (sp500_raw - rolling_high) / rolling_high * 100
     signals = sp500_raw.index[(drawdown <= -drop_pct) & (drawdown.shift(1) > -drop_pct)]
@@ -113,17 +108,32 @@ if run_btn:
 
         df_stats = pd.DataFrame(stats_list)
 
-        # ── 2. 勝率進化圖 ──
+        # ── 2. 勝率進化圖 (改為 Bar 圖) ──
         st.subheader("🎯 持有時間與賺錢機率關係圖")
         fig_wr = go.Figure()
-        fig_wr.add_trace(go.Scatter(x=df_stats["持有期"], y=df_stats["勝率"], mode='lines+markers+text', text=[f"{v:.0f}%" for v in df_stats["勝率"]], textposition="top center", line=dict(color='#34d399', width=4)))
-        fig_wr.update_layout(template="plotly_dark", height=350, yaxis=dict(range=[0, 110], title="勝率 (%)"))
+        fig_wr.add_trace(go.Bar(
+            x=df_stats["持有期"], 
+            y=df_stats["勝率"], 
+            text=[f"{v:.0f}%" for v in df_stats["勝率"]],
+            textposition="auto",
+            marker_color='#34d399',
+            opacity=0.85,
+            marker_line_color='#ffffff',
+            marker_line_width=1
+        ))
+        fig_wr.update_layout(
+            template="plotly_dark", 
+            height=350, 
+            yaxis=dict(range=[0, 110], title="勝率 (%)", gridcolor="#1f2937"),
+            xaxis=dict(title="持有期間"),
+            paper_bgcolor="#111827",
+            plot_bgcolor="#111827",
+            margin=dict(t=20, b=20)
+        )
         st.plotly_chart(fig_wr, use_container_width=True)
 
         # ── 3. 自動生成的績效解說 ──
         st.subheader("💡 投資績效深度解說")
-        
-        # 邏輯判斷修正
         best_row = df_stats.loc[df_stats['平均報酬'].idxmax()]
         safe_df = df_stats[df_stats['勝率'] >= 85]
         safe_period_text = f"持有至少 <b>{safe_df.iloc[0]['持有期']}</b>" if not safe_df.empty else "目前組合在各期勝率尚未達到 85% 的絕對穩健水位"
@@ -135,16 +145,15 @@ if run_btn:
         自 {start_year} 年以來，當 S&P 500 下跌 {drop_pct}% 時，買入 <b>{ticker_input}</b> 組合。
         歷史上共出現過 {len(df_res)} 次進場機會，長線平均表現為 <b>{best_row['平均報酬']:+.1f}%</b>。<br><br>
         
-        <b>2. 勝率關鍵轉折點：</b><br>
-        {safe_period_text}，在此之後賺錢的機率將大幅提升。這說明了長線投資能有效抵禦市場回檔時的恐慌。<br><br>
+        <b>2. 勝率趨勢分析：</b><br>
+        從柱狀圖可以清楚看出，{safe_period_text}，在此之後賺錢的機率（勝率）將大幅提升。這說明了時間是長期投資者對抗市場波動最有力的武器。<br><br>
         
-        <b>3. 風險預警：</b><br>
-        回測顯示，最極端的情況下（通常是買入後市場繼續探底），短期曾面臨 <b>{worst_loss:+.1f}%</b> 的虧損。
-        然而，隨著持有時間拉長到 5 年，最低報酬已變更為 {df_stats.iloc[-1]['最低']:+.1f}%，證明了時間是風險的最佳稀釋劑。<br><br>
+        <b>3. 風險與極端情況：</b><br>
+        回測顯示，最嚴峻的時刻（短期探底）曾面臨 <b>{worst_loss:+.1f}%</b> 的浮動虧損。
+        但值得注意的是，隨著持有時間延長，虧損機率與幅度皆顯著縮小，證明了「回檔買入 + 長線持有」的有效性。<br><br>
         
         <b>4. 結論建議：</b><br>
-        本組合表現最亮眼的持有期為 <b>{best_row['持有期']}</b>。建議投資人在觸發訊號後，應以此時間長度為目標進行配置，
-        不要因為 1~3 個月內的短期震盪而放棄長線獲利的機會。
+        本組合表現最亮眼的持有期為 <b>{best_row['持有期']}</b>。建議投資人在觸發訊號進場後，心中應以「年」為單位設定停利目標，而非被「月」單位的雜訊干擾。
         </div>
         """
         st.markdown(commentary, unsafe_allow_html=True)
