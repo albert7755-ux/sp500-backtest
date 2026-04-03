@@ -276,18 +276,25 @@ if run_btn:
             x=chart_df["買入日期"],
             y=chart_df["1年"],
             marker_color=chart_df["顏色"],
+            marker_line_width=0,
             text=chart_df["1年"].apply(lambda x: f"{x:+.1f}%"),
-            textposition="outside"
+            textposition="outside",
+            textfont=dict(color="white", size=10)
         ))
-        fig_bar.add_hline(y=0, line_color="#8b949e", line_dash="dot")
+        fig_bar.add_hline(y=0, line_color="#ffffff", line_dash="dot", line_width=1)
         fig_bar.update_layout(
             template="plotly_dark",
-            paper_bgcolor="#0d1117",
-            plot_bgcolor="#0d1117",
-            font=dict(family="Noto Sans TC"),
-            yaxis_title="1 年報酬率 (%)",
-            height=380,
-            margin=dict(t=20, b=60)
+            paper_bgcolor="#161b22",
+            plot_bgcolor="#161b22",
+            font=dict(family="Noto Sans TC", color="white"),
+            yaxis=dict(
+                title="1 年報酬率 (%)",
+                gridcolor="#30363d",
+                zerolinecolor="#8b949e"
+            ),
+            xaxis=dict(gridcolor="#30363d"),
+            height=420,
+            margin=dict(t=40, b=60)
         )
         st.plotly_chart(fig_bar, use_container_width=True)
 
@@ -330,10 +337,15 @@ if run_btn:
     display_cols = ["買入日期", "買入價格"] + period_cols
     display_df = valid_df[display_cols].copy()
 
-    styled = display_df.style.applymap(
+    def fmt_return(x):
+        if pd.isna(x):
+            return "—"
+        return f"{x:+.1f}%"
+
+    styled = display_df.style.map(
         color_return,
         subset=period_cols
-    ).format({p: lambda x: f"{x:+.1f}%" if not pd.isna(x) else "—" for p in period_cols})
+    ).format({p: fmt_return for p in period_cols})
 
     st.dataframe(styled, use_container_width=True, hide_index=True)
 
