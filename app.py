@@ -27,26 +27,36 @@ html, body, [class*="css"] { font-family: 'Noto Sans TC', sans-serif; }
     gap: 10px;
     flex-wrap: nowrap;
     overflow-x: auto;
-    padding-bottom: 6px;
+    padding-bottom: 10px;
 }
 .mcard {
     flex: 1 1 0;
-    min-width: 100px;
+    min-width: 125px; /* 增加最小寬度防止溢位 */
     background: linear-gradient(160deg, #1a2332 0%, #111827 100%);
     border: 1px solid #2d3748;
     border-radius: 14px;
-    padding: 14px 12px 12px;
+    padding: 14px 8px 12px; /* 減少左右內邊距，給文字更多空間 */
     text-align: center;
 }
-.mcard-label  { color: #6b7280; font-size: 0.72rem; margin-bottom: 6px; }
+.mcard-label  { 
+    color: #ffffff; /* 標題改為純白 */
+    font-size: 0.75rem; 
+    font-weight: 500;
+    margin-bottom: 6px; 
+}
 .mcard-value  {
     font-family: 'Roboto Mono', monospace;
-    font-size: 1.55rem;
+    font-size: 1.4rem; /* 稍微調低字體大小 (原 1.55) 確保三位數能放入 */
     font-weight: 700;
-    line-height: 1;
+    line-height: 1.1;
     white-space: nowrap;
 }
-.mcard-sub    { color: #6b7280; font-size: 0.68rem; margin-top: 6px; }
+.mcard-sub    { 
+    color: #e5e7eb; /* 子標籤改為淺亮灰色，提高對比度 */
+    font-size: 0.68rem; 
+    margin-top: 6px; 
+    line-height: 1.4;
+}
 .pos { color: #34d399; }
 .neg { color: #f87171; }
 
@@ -100,7 +110,7 @@ with st.sidebar:
     )
 
     st.markdown("---")
-    start_year = st.slider("📅 資料起始年份", 1990, 2020, 2000)
+    start_year = st.slider("📅 資料起始年份", 1990, 2020, 2010) # 預設改2010讓圖表更清晰
     start_date = f"{start_year}-01-01"
 
     st.markdown("---")
@@ -185,15 +195,15 @@ if run_btn:
         st.warning("請至少選擇一個持有期間")
         st.stop()
 
-    with st.spinner("📡 從 Yahoo Finance 載入資料（最多重試3次，約需10秒）..."):
+    with st.spinner("📡 從 Yahoo Finance 載入資料..."):
         sp500  = load_data("^GSPC", start_date)
         target = load_data(ticker_input, start_date)
 
     if sp500 is None:
-        st.error("❌ 無法載入 S&P 500（^GSPC）資料。Yahoo Finance 可能暫時限流，請稍後 10 秒後再按「開始回測」重試。")
+        st.error("❌ 無法載入 S&P 500 資料。請稍後重試。")
         st.stop()
     if target is None:
-        st.error(f"❌ 找不到代號「{ticker_input}」。美股直接輸入代號（如 SPY），台股請加 .TW（如 0050.TW）")
+        st.error(f"❌ 找不到代號「{ticker_input}」。")
         st.stop()
 
     buy_dates  = find_buy_signals(sp500, drop_pct, lookback_window)
@@ -202,7 +212,7 @@ if run_btn:
     period_cols = [p for p in selected_periods if p in valid_df.columns]
 
     if valid_df.empty or not period_cols:
-        st.warning("觸發訊號後資料不足，請縮短持有期或調整條件。")
+        st.warning("觸發訊號後資料不足，請調整條件。")
         st.stop()
 
     n_signals = len(valid_df)
@@ -219,6 +229,7 @@ if run_btn:
     cards_html = '<div class="cards-row">'
     for period in period_cols:
         col_data = valid_df[period].dropna()
+        if col_data.empty: continue
         avg      = col_data.mean()
         win_rate = (col_data > 0).mean() * 100
         cls      = "pos" if avg >= 0 else "neg"
@@ -227,233 +238,85 @@ if run_btn:
         <div class="mcard">
             <div class="mcard-label">{period}</div>
             <div class="mcard-value {cls}">{sign}{avg:.1f}%</div>
-            <div class="mcard-sub">勝率 {win_rate:.0f}%<br>{len(col_data)} 筆</div>
+            <div class="mcard-sub">勝率 {win_rate:.0f}%<br>{len(col_data)} 筆資料</div>
         </div>"""
     cards_html += '</div>'
     st.markdown(cards_html, unsafe_allow_html=True)
 
-    # ── insight ─────────────────────────────────────────────────────────────
-    best_p  = max(period_cols, key=lambda p: valid_df[p].dropna().mean())
+    # ── 數據洞察 ─────────────────────────────────────────────────────────────
+    best_p  = max(period_cols, key=lambda p: valid_df[p].dropna().mean() if not valid_df[p].dropna().empty else -999)
     best_v  = valid_df[best_p].dropna().mean()
     best_wr = (valid_df[best_p].dropna() > 0).mean() * 100
-    first_p = period_cols[0]
-    first_v = valid_df[first_p].dropna().mean()
     st.markdown(f"""
     <div class="insight-box">
     💡 <b>數據洞察</b>：{start_year} 年以來，每當 S&P 500 從高點下跌 {drop_pct}%，
     買入 <b>{ticker_input}</b> 並持有 <b>{best_p}</b>，平均報酬達 <b>{best_v:+.1f}%</b>，勝率 <b>{best_wr:.0f}%</b>。
-    即使只持有 {first_p}，平均也有 <b>{first_v:+.1f}%</b>。
     </div>""", unsafe_allow_html=True)
 
     st.markdown("---")
 
     # ════════════════════════════════════════════════════════════════════════
-    # 圖 1：累積財富成長曲線
+    # 圖表區塊 (財富成長、勝率泡泡、柱狀圖、走勢圖)
     # ════════════════════════════════════════════════════════════════════════
+    
+    # 圖 1：財富成長
     st.subheader("💰 每次買入後的財富成長曲線")
-    st.caption("假設每次觸發都投入 $100，顯示各持有期結束後資產變化（虛線 = 成本 $100）")
-
     fig_wealth = go.Figure()
-    fig_wealth.add_hline(y=100, line_dash="dash", line_color="#6b7280",
-                         annotation_text="成本 $100", annotation_font_color="#9ca3af")
-
+    fig_wealth.add_hline(y=100, line_dash="dash", line_color="#6b7280")
     for i, period in enumerate(period_cols):
         col_data = valid_df[period].dropna()
         wealth   = 100 * (1 + col_data / 100)
         x_vals   = valid_df.loc[col_data.index, "買入日期"].tolist()
         fig_wealth.add_trace(go.Scatter(
-            x=x_vals,
-            y=wealth.values,
-            mode="lines+markers",
-            name=period,
-            line=dict(color=COLORS[i % len(COLORS)], width=2),
-            marker=dict(size=5),
-            hovertemplate=f"<b>{period}</b><br>買入日：%{{x}}<br>$100 → $%{{y:.1f}}<extra></extra>"
+            x=x_vals, y=wealth.values, mode="lines+markers", name=period,
+            line=dict(color=COLORS[i % len(COLORS)], width=2), marker=dict(size=5)
         ))
-
-    fig_wealth.update_layout(
-        template="plotly_dark",
-        paper_bgcolor="#111827", plot_bgcolor="#111827",
-        font=dict(family="Noto Sans TC", color="#e5e7eb"),
-        yaxis=dict(title="資產價值（初始 $100）", gridcolor="#1f2937"),
-        xaxis=dict(gridcolor="#1f2937"),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, bgcolor="rgba(0,0,0,0)"),
-        height=420, margin=dict(t=50, b=40)
-    )
+    fig_wealth.update_layout(template="plotly_dark", paper_bgcolor="#111827", plot_bgcolor="#111827", height=420)
     st.plotly_chart(fig_wealth, use_container_width=True)
 
-    # ════════════════════════════════════════════════════════════════════════
     # 圖 2：勝率泡泡圖
-    # ════════════════════════════════════════════════════════════════════════
     st.subheader("🎯 各持有期勝率與平均報酬")
-    st.caption("越綠 = 勝率越高；氣泡越大 = 平均報酬越高；數字 = 平均報酬率")
-
     wr_vals  = [(valid_df[p].dropna() > 0).mean() * 100 for p in period_cols]
     avg_vals = [valid_df[p].dropna().mean() for p in period_cols]
-
-    fig_bubble = go.Figure()
-    fig_bubble.add_trace(go.Scatter(
-        x=period_cols,
-        y=wr_vals,
-        mode="markers+text",
-        text=[f"{v:+.1f}%" for v in avg_vals],
-        textposition="top center",
-        textfont=dict(size=11, color="white"),
-        marker=dict(
-            size=[max(20, abs(v) * 2.5) for v in avg_vals],
-            color=wr_vals,
-            colorscale=[[0,"#7f1d1d"],[0.5,"#78350f"],[1,"#064e3b"]],
-            cmin=0, cmax=100,
-            showscale=True,
-            colorbar=dict(title="勝率%", ticksuffix="%",
-                          tickfont=dict(color="#9ca3af"),
-                          title_font=dict(color="#9ca3af")),
-            line=dict(color="white", width=1.5)
-        ),
-        hovertemplate="<b>%{x}</b><br>勝率：%{y:.0f}%<br>平均報酬：%{text}<extra></extra>"
+    fig_bubble = go.Figure(go.Scatter(
+        x=period_cols, y=wr_vals, mode="markers+text", text=[f"{v:+.1f}%" for v in avg_vals],
+        textposition="top center", marker=dict(size=[max(20, abs(v) * 2.5) for v in avg_vals], color=wr_vals, colorscale='Viridis', showscale=True)
     ))
-    fig_bubble.add_hline(y=50, line_dash="dot", line_color="#6b7280",
-                         annotation_text="50% 勝率線", annotation_font_color="#9ca3af")
-    fig_bubble.update_layout(
-        template="plotly_dark",
-        paper_bgcolor="#111827", plot_bgcolor="#111827",
-        font=dict(family="Noto Sans TC", color="#e5e7eb"),
-        yaxis=dict(title="勝率 (%)", range=[0, 115], gridcolor="#1f2937"),
-        xaxis=dict(title="持有期", gridcolor="#1f2937"),
-        height=400, margin=dict(t=30, b=40)
-    )
+    fig_bubble.update_layout(template="plotly_dark", paper_bgcolor="#111827", plot_bgcolor="#111827", height=400, yaxis=dict(title="勝率 (%)", range=[0, 115]))
     st.plotly_chart(fig_bubble, use_container_width=True)
 
-    # ════════════════════════════════════════════════════════════════════════
-    # 圖 3：每次觸發後持有 1 年的柱狀圖
-    # ════════════════════════════════════════════════════════════════════════
-    best_bar_p = "1年" if "1年" in period_cols else period_cols[-1]
-    st.subheader(f"📅 每次觸發後持有 {best_bar_p} 的報酬")
-
-    chart_df   = valid_df[["買入日期", best_bar_p]].dropna().copy()
-    bar_colors = ["#34d399" if v >= 0 else "#f87171" for v in chart_df[best_bar_p]]
-    avg_line   = chart_df[best_bar_p].mean()
-
-    fig_bar = go.Figure(go.Bar(
-        x=chart_df["買入日期"],
-        y=chart_df[best_bar_p],
-        marker_color=bar_colors,
-        marker_line_width=0,
-        hovertemplate="買入日：%{x}<br>報酬：%{y:+.1f}%<extra></extra>"
-    ))
-    fig_bar.add_hline(y=0, line_color="#6b7280", line_width=1)
-    fig_bar.add_hline(y=avg_line, line_color="#facc15", line_dash="dash", line_width=1.5,
-                      annotation_text=f"平均 {avg_line:+.1f}%",
-                      annotation_font_color="#facc15",
-                      annotation_position="top left")
-    fig_bar.update_layout(
-        template="plotly_dark",
-        paper_bgcolor="#111827", plot_bgcolor="#111827",
-        font=dict(family="Noto Sans TC", color="#e5e7eb"),
-        yaxis=dict(title=f"{best_bar_p}報酬率(%)", gridcolor="#1f2937"),
-        xaxis=dict(gridcolor="#1f2937"),
-        height=400, margin=dict(t=40, b=60)
-    )
-    st.plotly_chart(fig_bar, use_container_width=True)
-
-    # ════════════════════════════════════════════════════════════════════════
-    # 圖 4：S&P 500 走勢 + 買入訊號
-    # ════════════════════════════════════════════════════════════════════════
+    # 圖 4：S&P 500 走勢 + 訊號
     st.subheader("📉 S&P 500 走勢與買入訊號點")
-
-    buy_pts = []
-    for d in buy_dates:
-        future = [x for x in sp500.index if x >= d]
-        if future:
-            bd = future[0]
-            buy_pts.append((bd, float(sp500.loc[bd])))
-
     fig_sp = go.Figure()
-    fig_sp.add_trace(go.Scatter(
-        x=sp500.index, y=sp500.values,
-        mode="lines", name="S&P 500",
-        line=dict(color="#60a5fa", width=1.5),
-        fill="tozeroy", fillcolor="rgba(96,165,250,0.05)"
-    ))
+    fig_sp.add_trace(go.Scatter(x=sp500.index, y=sp500.values, mode="lines", name="S&P 500", line=dict(color="#60a5fa")))
+    buy_pts = [(d, float(sp500.loc[sp500.index[sp500.index >= d][0]])) for d in buy_dates if any(sp500.index >= d)]
     if buy_pts:
         bx, by = zip(*buy_pts)
-        fig_sp.add_trace(go.Scatter(
-            x=list(bx), y=list(by),
-            mode="markers", name="買入訊號 ▲",
-            marker=dict(color="#fb923c", size=9, symbol="triangle-up",
-                        line=dict(color="white", width=1))
-        ))
-    fig_sp.update_layout(
-        template="plotly_dark",
-        paper_bgcolor="#111827", plot_bgcolor="#111827",
-        font=dict(family="Noto Sans TC", color="#e5e7eb"),
-        yaxis=dict(title="S&P 500 指數", gridcolor="#1f2937"),
-        xaxis=dict(gridcolor="#1f2937"),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, bgcolor="rgba(0,0,0,0)"),
-        height=380, margin=dict(t=40, b=40)
-    )
+        fig_sp.add_trace(go.Scatter(x=list(bx), y=list(by), mode="markers", name="買入點", marker=dict(color="#fb923c", size=10, symbol="triangle-up")))
+    fig_sp.update_layout(template="plotly_dark", paper_bgcolor="#111827", plot_bgcolor="#111827", height=380)
     st.plotly_chart(fig_sp, use_container_width=True)
-
-    st.markdown("---")
 
     # ── 統計摘要表 ──────────────────────────────────────────────────────────
     st.subheader("📊 統計摘要")
     summary_rows = []
     for period in period_cols:
         col_data = valid_df[period].dropna()
-        if col_data.empty:
-            continue
+        if col_data.empty: continue
         summary_rows.append({
-            "持有期":  period,
-            "樣本數":  len(col_data),
-            "平均報酬": f"{col_data.mean():+.1f}%",
-            "中位數":  f"{col_data.median():+.1f}%",
-            "最佳":    f"{col_data.max():+.1f}%",
-            "最差":    f"{col_data.min():+.1f}%",
-            "勝率":    f"{(col_data > 0).mean()*100:.0f}%",
-            "標準差":  f"{col_data.std():.1f}%",
+            "持有期": period, "樣本數": len(col_data), "平均報酬": f"{col_data.mean():+.1f}%",
+            "勝率": f"{(col_data > 0).mean()*100:.0f}%", "最佳": f"{col_data.max():+.1f}%", "最差": f"{col_data.min():+.1f}%"
         })
     st.dataframe(pd.DataFrame(summary_rows), use_container_width=True, hide_index=True)
 
-    # ── 每筆詳細（折疊） ────────────────────────────────────────────────────
-    with st.expander("📋 查看每筆買入詳細紀錄"):
-        display_df = valid_df[["買入日期", "買入價格"] + period_cols].copy()
-        styled = (display_df.style
-                  .map(color_cell, subset=period_cols)
-                  .format({p: fmt_pct for p in period_cols}))
-        st.dataframe(styled, use_container_width=True, hide_index=True)
-
     # ── 下載 ────────────────────────────────────────────────────────────────
     csv = valid_df.to_csv(index=False, encoding="utf-8-sig")
-    st.download_button(
-        "⬇️ 下載完整回測資料（CSV）",
-        data=csv,
-        file_name=f"backtest_{ticker_input}_drop{drop_pct}pct.csv",
-        mime="text/csv"
-    )
+    st.download_button("⬇️ 下載完整回測資料（CSV）", data=csv, file_name=f"backtest_{ticker_input}.csv", mime="text/csv")
 
-# ── 說明頁 ───────────────────────────────────────────────────────────────────
 else:
     st.info("👈 請在左側設定條件，點擊「開始回測」查看結果")
     st.markdown("""
 ### 🗺️ 使用說明
-1. **輸入買入標的代號**：SPY、QQQ、AAPL、0050.TW...
-2. **設定跌幅門檻**：S&P 500 從近期高點下跌幾 % 時觸發買入
-3. **高點回看窗口**：建議 90 日（約 4 個月）
-4. **起始年份**：越早資料越多，統計越可靠
-5. **持有期**：選你想觀察的持有時間
-6. 點 **開始回測** ✅
-
-### 📌 常見代號
-| 類型 | 代號 | 說明 |
-|------|------|------|
-| ETF | SPY | 標普500 ETF |
-| ETF | QQQ | 那斯達克100 |
-| ETF | VT | 全球股市 |
-| ETF | GLD | 黃金 |
-| 股票 | AAPL | 蘋果 |
-| 股票 | MSFT | 微軟 |
-| 台股 | 0050.TW | 元大台灣50 |
-
-> ⚠️ 資料來源：Yahoo Finance（免費）。Streamlit Cloud 偶爾被限流，若出現載入失敗，稍等 10 秒重按即可。
+1. **輸入代號**：SPY (美股)、0050.TW (台股)...
+2. **設定跌幅**：設定標普500跌多少 % 時「買入」
+3. **持有期**：觀察不同持時的時間長度表現
 """)
