@@ -117,10 +117,25 @@ def load_data(ticker, start):
     return None
 
 def find_buy_signals(sp500, drop_pct, window):
+    """
+    正確邏輯：跌破門檻 -> 買入一次 -> 鎖定。
+    必須等 drawdown 回升到 -(drop_pct/2) 以上才解鎖，
+    解鎖後再次跌破才算新觸發，避免底部震盪每天觸發。
+    """
     rolling_high = sp500.rolling(window=window).max()
     drawdown = (sp500 - rolling_high) / rolling_high * 100
-    signal = drawdown <= -drop_pct
-    return sp500.index[signal & (~signal.shift(1).fillna(False))]
+    reset_threshold = -(drop_pct / 2)
+    triggered = False
+    signal_dates = []
+    for date, dd in drawdown.items():
+        if pd.isna(dd):
+            continue
+        if not triggered and dd <= -drop_pct:
+            signal_dates.append(date)
+            triggered = True
+        elif triggered and dd > reset_threshold:
+            triggered = False
+    return pd.DatetimeIndex(signal_dates)
 
 def calc_returns(target, buy_dates, periods_days):
     results = []
