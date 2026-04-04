@@ -117,25 +117,10 @@ def load_data(ticker, start):
     return None
 
 def find_buy_signals(sp500, drop_pct, window):
-    """
-    正確邏輯：跌破門檻 -> 買入一次 -> 鎖定。
-    必須等 drawdown 回升到 -(drop_pct/2) 以上才解鎖，
-    解鎖後再次跌破才算新觸發，避免底部震盪每天觸發。
-    """
     rolling_high = sp500.rolling(window=window).max()
     drawdown = (sp500 - rolling_high) / rolling_high * 100
-    reset_threshold = -(drop_pct / 2)
-    triggered = False
-    signal_dates = []
-    for date, dd in drawdown.items():
-        if pd.isna(dd):
-            continue
-        if not triggered and dd <= -drop_pct:
-            signal_dates.append(date)
-            triggered = True
-        elif triggered and dd > reset_threshold:
-            triggered = False
-    return pd.DatetimeIndex(signal_dates)
+    signal = drawdown <= -drop_pct
+    return sp500.index[signal & (~signal.shift(1).fillna(False))]
 
 def calc_returns(target, buy_dates, periods_days):
     results = []
@@ -323,43 +308,44 @@ if "result" in st.session_state:
     st.markdown("---")
 
     # ════════════════════════════════════════════════════════════════════════
-    # 圖 1：勝率泡泡圖
+    # 圖 1：各持有期 平均報酬 + 勝率 雙柱狀圖
     # ════════════════════════════════════════════════════════════════════════
     st.subheader("🎯 各持有期勝率與平均報酬")
-    st.caption("越綠 = 勝率越高；氣泡越大 = 平均報酬越高")
+    st.caption("藍柱 = 平均報酬率（左軸）；橘柱 = 勝率（右軸）")
 
     wr_vals  = [(valid_df[p].dropna() > 0).mean() * 100 for p in period_cols]
     avg_vals = [valid_df[p].dropna().mean() for p in period_cols]
 
-    fig_bubble = go.Figure()
-    fig_bubble.add_trace(go.Scatter(
-        x=period_cols, y=wr_vals,
-        mode="markers+text",
+    fig_bars = go.Figure()
+    fig_bars.add_trace(go.Bar(
+        x=period_cols, y=avg_vals, name="平均報酬率",
+        marker_color=["#34d399" if v >= 0 else "#f87171" for v in avg_vals],
+        marker_line_width=0,
         text=[f"{v:+.1f}%" for v in avg_vals],
-        textposition="top center",
-        textfont=dict(size=11, color="white"),
-        marker=dict(
-            size=[max(20, abs(v)*2.5) for v in avg_vals],
-            color=wr_vals,
-            colorscale=[[0,"#7f1d1d"],[0.5,"#78350f"],[1,"#064e3b"]],
-            cmin=0, cmax=100, showscale=True,
-            colorbar=dict(title="勝率%", ticksuffix="%",
-                          tickfont=dict(color="#9ca3af"),
-                          title_font=dict(color="#9ca3af")),
-            line=dict(color="white", width=1.5)
-        ),
-        hovertemplate="<b>%{x}</b><br>勝率：%{y:.0f}%<br>平均報酬：%{text}<extra></extra>"
+        textposition="outside",
+        textfont=dict(color="white", size=11),
+        yaxis="y1"
     ))
-    fig_bubble.add_hline(y=50, line_dash="dot", line_color="#6b7280",
-                         annotation_text="50% 勝率線", annotation_font_color="#9ca3af")
-    fig_bubble.update_layout(
+    fig_bars.add_trace(go.Bar(
+        x=period_cols, y=wr_vals, name="勝率",
+        marker_color="rgba(251,146,60,0.75)",
+        marker_line_width=0,
+        text=[f"{v:.0f}%" for v in wr_vals],
+        textposition="outside",
+        textfont=dict(color="white", size=11),
+        yaxis="y2"
+    ))
+    fig_bars.update_layout(
         template="plotly_dark", paper_bgcolor="#111827", plot_bgcolor="#111827",
         font=dict(family="Noto Sans TC", color="#e5e7eb"),
-        yaxis=dict(title="勝率 (%)", range=[0,115], gridcolor="#1f2937"),
-        xaxis=dict(title="持有期", gridcolor="#1f2937"),
-        height=400, margin=dict(t=30, b=40)
+        barmode="group",
+        yaxis=dict(title="平均報酬率 (%)", gridcolor="#1f2937", side="left"),
+        yaxis2=dict(title="勝率 (%)", overlaying="y", side="right",
+                    range=[0, 130], showgrid=False),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, bgcolor="rgba(0,0,0,0)"),
+        height=420, margin=dict(t=50, b=40)
     )
-    st.plotly_chart(fig_bubble, use_container_width=True)
+    st.plotly_chart(fig_bars, use_container_width=True)
 
     # ════════════════════════════════════════════════════════════════════════
     # 圖 2：每次觸發柱狀圖
