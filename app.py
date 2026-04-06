@@ -57,19 +57,30 @@ html, body, [class*="css"] { font-family: 'Noto Sans TC', sans-serif; }
 
 # ─── 標題 ────────────────────────────────────────────────────────────────────
 st.title("📉 標普500跌幅後買入回測工具")
-st.caption("設定 S&P 500 跌幅條件，回測買入任何股票／ETF 後的歷史績效")
+st.caption("設定任意標的跌幅條件，回測買入另一個股票／ETF 後的歷史績效")
 
 # ─── 側邊欄 ──────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.header("⚙️ 回測設定")
+    st.markdown("**📌 買入標的**")
     ticker_input = st.text_input(
-        "📌 買入標的代號", value="SPY",
+        "買入標的代號", value="SPY",
         help="美股：SPY、QQQ、AAPL｜台股：0050.TW"
     ).upper().strip()
 
     st.markdown("---")
+    st.markdown("**📉 觸發條件標的**")
+    signal_ticker = st.text_input(
+        "跌幅觸發標的代號", value="^GSPC",
+        help="預設 ^GSPC（S&P 500）；也可填 QQQ、VIX、0050.TW 等"
+    ).upper().strip()
+    signal_name = st.text_input(
+        "觸發標的顯示名稱（自訂）", value="S&P 500",
+        help="純顯示用，例如填「那斯達克100」"
+    ).strip()
+
     drop_pct = st.slider(
-        "📉 S&P 500 從近期高點下跌 % 後買入",
+        "從近期高點下跌 % 後買入",
         min_value=2, max_value=50, value=10, step=1, format="%d%%"
     )
     lookback_window = st.selectbox(
@@ -223,7 +234,7 @@ if run_btn:
         st.stop()
 
     with st.spinner("📡 從 Yahoo Finance 載入資料（最多重試3次）..."):
-        sp500  = load_data("^GSPC", start_date)
+        sp500  = load_data(signal_ticker, start_date)
         target = load_data(ticker_input, start_date)
 
     if sp500 is None:
@@ -249,6 +260,8 @@ if run_btn:
         "sp500":         sp500,
         "buy_dates":     buy_dates,
         "ticker":        ticker_input,
+        "signal_ticker": signal_ticker,
+        "signal_name":   signal_name,
         "drop_pct":      drop_pct,
         "lookback":      lookback_window,
         "start_year":    start_year,
@@ -261,16 +274,18 @@ if "result" in st.session_state:
     period_cols  = R["period_cols"]
     sp500        = R["sp500"]
     buy_dates    = R["buy_dates"]
-    ticker_input = R["ticker"]
-    drop_pct     = R["drop_pct"]
+    ticker_input  = R["ticker"]
+    signal_ticker = R.get("signal_ticker", "^GSPC")
+    signal_name   = R.get("signal_name", "S&P 500")
+    drop_pct      = R["drop_pct"]
     lookback_window = R["lookback"]
-    start_year   = R["start_year"]
+    start_year    = R["start_year"]
     n_signals    = len(valid_df)
 
     # ── 標題 ────────────────────────────────────────────────────────────────
     st.markdown(f"""
     <div class="result-header">
-        📊 S&P 500 從 {lookback_window} 日高點跌 {drop_pct}% → 買入 <b>{ticker_input}</b>
+        📊 {signal_name} 從 {lookback_window} 日高點跌 {drop_pct}% → 買入 <b>{ticker_input}</b>
         &nbsp;｜&nbsp; 歷史共觸發 <b>{n_signals}</b> 次
     </div>""", unsafe_allow_html=True)
 
@@ -300,7 +315,7 @@ if "result" in st.session_state:
     first_v = valid_df[first_p].dropna().mean()
     st.markdown(f"""
     <div class="insight-box">
-    💡 <b>數據洞察</b>：{start_year} 年以來，每當 S&P 500 從高點下跌 {drop_pct}%，
+    💡 <b>數據洞察</b>：{start_year} 年以來，每當 {signal_name} 從高點下跌 {drop_pct}%，
     買入 <b>{ticker_input}</b> 並持有 <b>{best_p}</b>，平均報酬達 <b>{best_v:+.1f}%</b>，勝率 <b>{best_wr:.0f}%</b>。
     即使只持有 {first_p}，平均也有 <b>{first_v:+.1f}%</b>。
     </div>""", unsafe_allow_html=True)
@@ -378,7 +393,7 @@ if "result" in st.session_state:
     # ════════════════════════════════════════════════════════════════════════
     # 圖 3：S&P 500 走勢 + 買入訊號
     # ════════════════════════════════════════════════════════════════════════
-    st.subheader("📉 S&P 500 走勢與買入訊號點")
+    st.subheader(f"📉 {signal_name} 走勢與買入訊號點")
     buy_pts = []
     for d in buy_dates:
         future = [x for x in sp500.index if x >= d]
@@ -388,7 +403,7 @@ if "result" in st.session_state:
 
     fig_sp = go.Figure()
     fig_sp.add_trace(go.Scatter(
-        x=sp500.index, y=sp500.values, mode="lines", name="S&P 500",
+        x=sp500.index, y=sp500.values, mode="lines", name=signal_name,
         line=dict(color="#60a5fa", width=1.5),
         fill="tozeroy", fillcolor="rgba(96,165,250,0.05)"
     ))
@@ -402,7 +417,7 @@ if "result" in st.session_state:
     fig_sp.update_layout(
         template="plotly_dark", paper_bgcolor="#111827", plot_bgcolor="#111827",
         font=dict(family="Noto Sans TC", color="#e5e7eb"),
-        yaxis=dict(title="S&P 500 指數", gridcolor="#1f2937"),
+        yaxis=dict(title=f"{signal_name} 指數", gridcolor="#1f2937"),
         xaxis=dict(gridcolor="#1f2937"),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, bgcolor="rgba(0,0,0,0)"),
         height=380, margin=dict(t=40, b=40)
@@ -483,7 +498,8 @@ else:
     st.markdown("""
 ### 🗺️ 使用說明
 1. **輸入買入標的代號**：SPY、QQQ、AAPL、0050.TW...
-2. **設定跌幅門檻**：S&P 500 從近期高點下跌幾 % 時觸發買入
+2. **設定觸發標的代號**：預設 `^GSPC`（S&P 500），可換成任何標的
+3. **設定跌幅門檻**：觸發標的從近期高點下跌幾 % 時買入
 3. **高點回看窗口**：建議 90 日（約 4 個月）
 4. **起始年份**：越早資料越多，統計越可靠
 5. **持有期**：選你想觀察的時間
