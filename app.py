@@ -72,12 +72,15 @@ with st.sidebar:
     st.markdown("**📉 觸發條件標的**")
     signal_ticker = st.text_input(
         "跌幅觸發標的代號", value="^GSPC",
-        help="預設 ^GSPC（S&P 500）；也可填 QQQ、VIX、0050.TW 等"
+        help="預設 ^GSPC（S&P 500）；也可填 QQQ、^SOX、^TWII、0050.TW 等"
     ).upper().strip()
-    signal_name = st.text_input(
-        "觸發標的顯示名稱（自訂）", value="S&P 500",
-        help="純顯示用，例如填「那斯達克100」"
-    ).strip()
+    # 自動產生顯示名稱，不用手動填
+    TICKER_NAMES = {
+        "^GSPC": "S&P 500", "^NDX": "那斯達克100", "QQQ": "那斯達克100 ETF",
+        "^SOX": "費城半導體", "SOXX": "半導體ETF", "^VIX": "恐慌指數VIX",
+        "^TWII": "台灣加權指數", "0050.TW": "台灣50",
+    }
+    signal_name = TICKER_NAMES.get(signal_ticker, signal_ticker)
 
     drop_pct = st.slider(
         "從近期高點下跌 % 後買入",
