@@ -31,13 +31,13 @@ html, body, [class*="css"] { font-family: 'Noto Sans TC', sans-serif; }
     border: 1px solid #2d3748; border-radius: 14px;
     padding: 14px 12px 12px; text-align: center;
 }
-.mcard-label { color: #6b7280; font-size: 0.72rem; margin-bottom: 6px; }
+.mcard-label { color: #d1d5db; font-size: 0.72rem; margin-bottom: 6px; }
 .mcard-value {
     font-family: 'Roboto Mono', monospace;
     font-size: 1.55rem; font-weight: 700;
     line-height: 1; white-space: nowrap;
 }
-.mcard-sub { color: #6b7280; font-size: 0.68rem; margin-top: 6px; }
+.mcard-sub { color: #d1d5db; font-size: 0.68rem; margin-top: 6px; }
 .pos { color: #34d399; }
 .neg { color: #f87171; }
 
@@ -50,7 +50,7 @@ html, body, [class*="css"] { font-family: 'Noto Sans TC', sans-serif; }
     background: linear-gradient(135deg, #0f2027 0%, #1a2a3a 100%);
     border-left: 4px solid #3b82f6; border-radius: 0 10px 10px 0;
     padding: 14px 18px; margin: 10px 0 18px;
-    color: #cbd5e1; font-size: 0.88rem; line-height: 1.7;
+    color: #f1f5f9; font-size: 0.88rem; line-height: 1.7;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -157,7 +157,7 @@ def calc_returns(target, buy_dates, periods_days):
     return pd.DataFrame(results)
 
 def color_cell(val):
-    if pd.isna(val): return "color: #6b7280"
+    if pd.isna(val): return "color: #9ca3af"
     return "color: #34d399; font-weight:600" if val >= 0 else "color: #f87171; font-weight:600"
 
 def fmt_pct(x):
@@ -208,7 +208,7 @@ def draw_normal_dist(valid_df, period, period_cols):
         annotation_text=f"μ={mu:+.1f}%", annotation_font_color="#facc15",
         annotation_position="top right")
     fig.add_vline(x=0, line_color="#6b7280", line_dash="dot", line_width=1.5,
-        annotation_text="0%", annotation_font_color="#9ca3af",
+        annotation_text="0%", annotation_font_color="#e5e7eb",
         annotation_position="top left")
     for val, lbl, pos in [
         (mu-sigma, f"-1σ={mu-sigma:+.1f}%", "top left"),
