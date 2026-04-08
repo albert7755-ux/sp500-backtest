@@ -344,15 +344,16 @@ with tab2:
                         template="plotly_dark",
                         paper_bgcolor="#111827", plot_bgcolor="#111827",
                         font=dict(family="Noto Sans TC", color="#e5e7eb"),
-                        title=dict(
-                            text=f"{disp_name} 不同時期走勢比較",
-                            font=dict(size=15, color="#f1f5f9")
-                        ),
                         xaxis=dict(title="交易日數（從各時期起始點）", gridcolor="#1f2937"),
                         yaxis=dict(title=y_title, gridcolor="#1f2937"),
-                        legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                        legend=dict(orientation="h", yanchor="top", y=1.08,
                                     bgcolor="rgba(0,0,0,0)", font=dict(color="#f1f5f9")),
-                        height=520, margin=dict(t=60, b=50)
+                        height=540, margin=dict(t=80, b=50),
+                        title=dict(
+                            text=f"{disp_name} 不同時期走勢比較",
+                            font=dict(size=15, color="#f1f5f9"),
+                            x=0, xanchor="left", y=0.01, yanchor="bottom"
+                        )
                     )
                     st.plotly_chart(fig_cmp, use_container_width=True)
 
