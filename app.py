@@ -56,8 +56,8 @@ html, body, [class*="css"] { font-family: 'Noto Sans TC', sans-serif; }
 """, unsafe_allow_html=True)
 
 # ─── 標題 ────────────────────────────────────────────────────────────────────
-st.title("📉 標普500跌幅後買入回測工具")
-st.caption("設定任意標的跌幅條件，回測買入另一個股票／ETF 後的歷史績效")
+st.title("📉 股市回測與走勢比較工具")
+st.caption("跌幅後買入回測 ｜ 不同時期走勢比較")
 
 # ─── 側邊欄 ──────────────────────────────────────────────────────────────────
 with st.sidebar:
@@ -230,294 +230,449 @@ def draw_normal_dist(valid_df, period, period_cols):
     return fig, mu, sigma, n
 
 # ─── 按下回測：計算並存入 session_state ─────────────────────────────────────
-if run_btn:
-    selected_periods = {p: PERIOD_MAP[p] for p in periods if p in PERIOD_MAP}
-    if not selected_periods:
-        st.warning("請至少選擇一個持有期間")
-        st.stop()
+# ─── 頁籤 ───────────────────────────────────────────────────────────────────
+tab1, tab2 = st.tabs(["📉 跌幅後買入回測", "📊 不同時期走勢比較"])
 
-    with st.spinner("📡 從 Yahoo Finance 載入資料（最多重試3次）..."):
-        sp500  = load_data(signal_ticker, start_date)
-        target = load_data(ticker_input, start_date)
+# ════════════════════════════════════════════════════════════════════════════
+# TAB 2：走勢比較（獨立，不依賴回測結果）
+# ════════════════════════════════════════════════════════════════════════════
+with tab2:
+    st.subheader("📊 同一標的不同時期走勢比較")
+    st.caption("將各時期走勢對齊到起跌點（0%），直觀比較跌幅與反彈速度")
 
-    if sp500 is None:
-        st.error("❌ 無法載入 S&P 500 資料。Yahoo Finance 可能暫時限流，稍後 10 秒再按「開始回測」重試。")
-        st.stop()
-    if target is None:
-        st.error(f"❌ 找不到代號「{ticker_input}」。美股直接輸入代號（SPY），台股請加 .TW（0050.TW）")
-        st.stop()
+    col_l, col_r = st.columns([1, 2])
+    with col_l:
+        cmp_ticker = st.text_input(
+            "比較標的代號", value="^GSPC",
+            help="例如 ^GSPC、QQQ、^SOX、0050.TW"
+        ).upper().strip()
 
-    buy_dates   = find_buy_signals(sp500, drop_pct, lookback_window)
-    df_results  = calc_returns(target, buy_dates, selected_periods)
-    valid_df    = df_results.dropna(subset=list(selected_periods.keys()), how="all")
-    period_cols = [p for p in selected_periods if p in valid_df.columns]
+        st.markdown("**選擇要比較的時期**（可多選）")
+        st.caption("每個時期填入起始日期，程式自動抓之後 400 個交易日的走勢")
 
-    if valid_df.empty or not period_cols:
-        st.warning("觸發訊號後資料不足，請縮短持有期或調整條件。")
-        st.stop()
+        # 預設幾個常見事件
+        default_periods_cmp = [
+            ("2022年升息熊市", "2022-01-03"),
+            ("2020年疫情", "2020-02-19"),
+            ("2018年修正", "2018-09-20"),
+            ("2025年現在", "2025-01-01"),
+        ]
 
-    # ✅ 把所有結果存進 session_state，selectbox 切換時不會消失
-    st.session_state["result"] = {
-        "valid_df":      valid_df,
-        "period_cols":   period_cols,
-        "sp500":         sp500,
-        "buy_dates":     buy_dates,
-        "ticker":        ticker_input,
-        "signal_ticker": signal_ticker,
-        "signal_name":   signal_name,
-        "drop_pct":      drop_pct,
-        "lookback":      lookback_window,
-        "start_year":    start_year,
-    }
+        cmp_periods = []
+        for i in range(6):
+            c1, c2 = st.columns([2, 3])
+            default_label = default_periods_cmp[i][0] if i < len(default_periods_cmp) else ""
+            default_date  = default_periods_cmp[i][1] if i < len(default_periods_cmp) else ""
+            with c1:
+                label = st.text_input(f"名稱 {i+1}", value=default_label, key=f"cmp_label_{i}")
+            with c2:
+                date  = st.text_input(f"起始日 {i+1}", value=default_date,
+                                      placeholder="YYYY-MM-DD", key=f"cmp_date_{i}")
+            if label.strip() and date.strip():
+                cmp_periods.append((label.strip(), date.strip()))
 
-# ─── 顯示結果（從 session_state 讀取，不依賴 run_btn）────────────────────────
-if "result" in st.session_state:
-    R            = st.session_state["result"]
-    valid_df     = R["valid_df"]
-    period_cols  = R["period_cols"]
-    sp500        = R["sp500"]
-    buy_dates    = R["buy_dates"]
-    ticker_input  = R["ticker"]
-    signal_ticker = R.get("signal_ticker", "^GSPC")
-    signal_name   = R.get("signal_name", "S&P 500")
-    drop_pct      = R["drop_pct"]
-    lookback_window = R["lookback"]
-    start_year    = R["start_year"]
-    n_signals    = len(valid_df)
+        days_to_show = st.slider("顯示天數（交易日）", 60, 600, 400, 20)
+        align_mode = st.radio("對齊方式", ["從起始日對齊（絕對走勢）", "從高點跌幅對齊（跌幾%）"], index=1)
+        cmp_btn = st.button("🔍 產生比較圖", type="primary", use_container_width=True)
 
-    # ── 標題 ────────────────────────────────────────────────────────────────
-    st.markdown(f"""
-    <div class="result-header">
-        📊 {signal_name} 從 {lookback_window} 日高點跌 {drop_pct}% → 買入 <b>{ticker_input}</b>
-        &nbsp;｜&nbsp; 歷史共觸發 <b>{n_signals}</b> 次
-    </div>""", unsafe_allow_html=True)
+    with col_r:
+        if cmp_btn and cmp_ticker and cmp_periods:
+            with st.spinner("載入資料中..."):
+                # 抓足夠長的資料
+                earliest = min(p[1] for p in cmp_periods)
+                raw = load_data(cmp_ticker, earliest)
 
-    # ── 卡片 ────────────────────────────────────────────────────────────────
-    st.subheader("📈 各持有期平均報酬率")
-    cards_html = '<div class="cards-row">'
-    for period in period_cols:
-        col_data = valid_df[period].dropna()
-        avg      = col_data.mean()
-        win_rate = (col_data > 0).mean() * 100
-        cls      = "pos" if avg >= 0 else "neg"
-        sign     = "+" if avg >= 0 else ""
-        cards_html += f"""
-        <div class="mcard">
-            <div class="mcard-label">{period}</div>
-            <div class="mcard-value {cls}">{sign}{avg:.1f}%</div>
-            <div class="mcard-sub">勝率 {win_rate:.0f}%<br>{len(col_data)} 筆</div>
-        </div>"""
-    cards_html += '</div>'
-    st.markdown(cards_html, unsafe_allow_html=True)
+            if raw is None:
+                st.error(f"❌ 無法載入「{cmp_ticker}」，請確認代號或稍後重試。")
+            else:
+                TICKER_NAMES2 = {
+                    "^GSPC": "S&P 500", "^NDX": "那斯達克100", "QQQ": "QQQ",
+                    "^SOX": "費城半導體", "^VIX": "VIX", "^TWII": "台灣加權",
+                    "0050.TW": "台灣50",
+                }
+                disp_name = TICKER_NAMES2.get(cmp_ticker, cmp_ticker)
+                fig_cmp = go.Figure()
 
-    # ── Insight ──────────────────────────────────────────────────────────────
-    best_p  = max(period_cols, key=lambda p: valid_df[p].dropna().mean())
-    best_v  = valid_df[best_p].dropna().mean()
-    best_wr = (valid_df[best_p].dropna() > 0).mean() * 100
-    first_p = period_cols[0]
-    first_v = valid_df[first_p].dropna().mean()
-    st.markdown(f"""
-    <div class="insight-box">
-    💡 <b>數據洞察</b>：{start_year} 年以來，每當 {signal_name} 從高點下跌 {drop_pct}%，
-    買入 <b>{ticker_input}</b> 並持有 <b>{best_p}</b>，平均報酬達 <b>{best_v:+.1f}%</b>，勝率 <b>{best_wr:.0f}%</b>。
-    即使只持有 {first_p}，平均也有 <b>{first_v:+.1f}%</b>。
-    </div>""", unsafe_allow_html=True)
+                valid_count = 0
+                for label, start_str in cmp_periods:
+                    try:
+                        start_dt = pd.Timestamp(start_str)
+                    except Exception:
+                        st.warning(f"「{label}」日期格式錯誤，請用 YYYY-MM-DD")
+                        continue
 
-    st.markdown("---")
+                    # 找最近的交易日
+                    future_idx = [d for d in raw.index if d >= start_dt]
+                    if not future_idx:
+                        st.warning(f"「{label}」的起始日 {start_str} 超出資料範圍")
+                        continue
+                    actual_start = future_idx[0]
+                    segment = raw.loc[actual_start:].iloc[:days_to_show]
+                    if len(segment) < 5:
+                        continue
 
-    # ════════════════════════════════════════════════════════════════════════
-    # 圖 1：各持有期 平均報酬 + 勝率 雙柱狀圖
-    # ════════════════════════════════════════════════════════════════════════
-    st.subheader("🎯 各持有期勝率與平均報酬")
-    st.caption("藍柱 = 平均報酬率（左軸）；橘柱 = 勝率（右軸）")
+                    base_price = float(segment.iloc[0])
+                    if "跌幅" in align_mode:
+                        # 以起始點為 0%，計算每天相對漲跌
+                        y_vals = ((segment / base_price) - 1) * 100
+                        y_title = "相對起點漲跌幅 (%)"
+                    else:
+                        # 絕對價格，以起始點 = 100 標準化
+                        y_vals = (segment / base_price) * 100
+                        y_title = "相對指數（起始點 = 100）"
 
-    wr_vals  = [(valid_df[p].dropna() > 0).mean() * 100 for p in period_cols]
-    avg_vals = [valid_df[p].dropna().mean() for p in period_cols]
+                    x_vals = list(range(len(segment)))  # x 軸用交易日天數
 
-    fig_bars = go.Figure()
-    fig_bars.add_trace(go.Bar(
-        x=period_cols, y=avg_vals, name="平均報酬率",
-        marker_color=["#34d399" if v >= 0 else "#f87171" for v in avg_vals],
-        marker_line_width=0,
-        text=[f"{v:+.1f}%" for v in avg_vals],
-        textposition="outside",
-        textfont=dict(color="white", size=11),
-        yaxis="y1"
-    ))
-    fig_bars.add_trace(go.Bar(
-        x=period_cols, y=wr_vals, name="勝率",
-        marker_color="rgba(251,146,60,0.75)",
-        marker_line_width=0,
-        text=[f"{v:.0f}%" for v in wr_vals],
-        textposition="outside",
-        textfont=dict(color="white", size=11),
-        yaxis="y2"
-    ))
-    fig_bars.update_layout(
-        template="plotly_dark", paper_bgcolor="#111827", plot_bgcolor="#111827",
-        font=dict(family="Noto Sans TC", color="#e5e7eb"),
-        barmode="group",
-        yaxis=dict(title="平均報酬率 (%)", gridcolor="#1f2937", side="left"),
-        yaxis2=dict(title="勝率 (%)", overlaying="y", side="right",
-                    range=[0, 130], showgrid=False),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, bgcolor="rgba(0,0,0,0)"),
-        height=420, margin=dict(t=50, b=40)
-    )
-    st.plotly_chart(fig_bars, use_container_width=True)
+                    fig_cmp.add_trace(go.Scatter(
+                        x=x_vals, y=y_vals.values,
+                        mode="lines", name=label,
+                        line=dict(width=2),
+                        hovertemplate=f"<b>{label}</b><br>第%{{x}}個交易日<br>%{{y:+.1f}}%<extra></extra>"
+                    ))
+                    valid_count += 1
 
-    # ════════════════════════════════════════════════════════════════════════
-    # 圖 2：每次觸發柱狀圖
-    # ════════════════════════════════════════════════════════════════════════
-    best_bar_p = "1年" if "1年" in period_cols else period_cols[-1]
-    st.subheader(f"📅 每次觸發後持有 {best_bar_p} 的報酬")
+                if valid_count == 0:
+                    st.warning("沒有有效的時期資料，請確認日期格式（YYYY-MM-DD）")
+                else:
+                    # 加 0 基準線
+                    if "跌幅" in align_mode:
+                        fig_cmp.add_hline(y=0, line_color="#6b7280", line_dash="dot", line_width=1)
 
-    chart_df   = valid_df[["買入日期", best_bar_p]].dropna().copy()
-    bar_colors = ["#34d399" if v >= 0 else "#f87171" for v in chart_df[best_bar_p]]
-    avg_line   = chart_df[best_bar_p].mean()
+                    fig_cmp.update_layout(
+                        template="plotly_dark",
+                        paper_bgcolor="#111827", plot_bgcolor="#111827",
+                        font=dict(family="Noto Sans TC", color="#e5e7eb"),
+                        title=dict(
+                            text=f"{disp_name} 不同時期走勢比較",
+                            font=dict(size=15, color="#f1f5f9")
+                        ),
+                        xaxis=dict(title="交易日數（從各時期起始點）", gridcolor="#1f2937"),
+                        yaxis=dict(title=y_title, gridcolor="#1f2937"),
+                        legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                                    bgcolor="rgba(0,0,0,0)", font=dict(color="#f1f5f9")),
+                        height=520, margin=dict(t=60, b=50)
+                    )
+                    st.plotly_chart(fig_cmp, use_container_width=True)
 
-    fig_bar = go.Figure(go.Bar(
-        x=chart_df["買入日期"], y=chart_df[best_bar_p],
-        marker_color=bar_colors, marker_line_width=0,
-        hovertemplate="買入日：%{x}<br>報酬：%{y:+.1f}%<extra></extra>"
-    ))
-    fig_bar.add_hline(y=0, line_color="#6b7280", line_width=1)
-    fig_bar.add_hline(y=avg_line, line_color="#facc15", line_dash="dash", line_width=1.5,
-                      annotation_text=f"平均 {avg_line:+.1f}%",
-                      annotation_font_color="#facc15", annotation_position="top left")
-    fig_bar.update_layout(
-        template="plotly_dark", paper_bgcolor="#111827", plot_bgcolor="#111827",
-        font=dict(family="Noto Sans TC", color="#e5e7eb"),
-        yaxis=dict(title=f"{best_bar_p}報酬率(%)", gridcolor="#1f2937"),
-        xaxis=dict(gridcolor="#1f2937"),
-        height=400, margin=dict(t=40, b=60)
-    )
-    st.plotly_chart(fig_bar, use_container_width=True)
+                    # 統計比較表
+                    st.markdown("**📋 各時期統計**")
+                    stat_rows = []
+                    for label, start_str in cmp_periods:
+                        try:
+                            start_dt = pd.Timestamp(start_str)
+                            future_idx = [d for d in raw.index if d >= start_dt]
+                            if not future_idx: continue
+                            segment = raw.loc[future_idx[0]:].iloc[:days_to_show]
+                            if len(segment) < 5: continue
+                            base = float(segment.iloc[0])
+                            pct = ((segment / base) - 1) * 100
+                            stat_rows.append({
+                                "時期": label,
+                                "起始日": start_str,
+                                "最大跌幅": f"{pct.min():+.1f}%",
+                                "最大漲幅": f"{pct.max():+.1f}%",
+                                f"第{days_to_show}日報酬": f"{float(pct.iloc[-1]):+.1f}%" if len(pct)==days_to_show else "資料不足",
+                            })
+                        except Exception:
+                            continue
+                    if stat_rows:
+                        st.dataframe(pd.DataFrame(stat_rows), use_container_width=True, hide_index=True)
+        elif not cmp_btn:
+            st.info("👈 設定標的與時期後，點擊「產生比較圖」")
 
-    # ════════════════════════════════════════════════════════════════════════
-    # 圖 3：S&P 500 走勢 + 買入訊號
-    # ════════════════════════════════════════════════════════════════════════
-    st.subheader(f"📉 {signal_name} 走勢與買入訊號點")
-    buy_pts = []
-    for d in buy_dates:
-        future = [x for x in sp500.index if x >= d]
-        if future:
-            bd = future[0]
-            buy_pts.append((bd, float(sp500.loc[bd])))
+# ════════════════════════════════════════════════════════════════════════════
+# TAB 1：原本的回測功能
+# ════════════════════════════════════════════════════════════════════════════
+with tab1:
 
-    fig_sp = go.Figure()
-    fig_sp.add_trace(go.Scatter(
-        x=sp500.index, y=sp500.values, mode="lines", name=signal_name,
-        line=dict(color="#60a5fa", width=1.5),
-        fill="tozeroy", fillcolor="rgba(96,165,250,0.05)"
-    ))
-    if buy_pts:
-        bx, by = zip(*buy_pts)
-        fig_sp.add_trace(go.Scatter(
-            x=list(bx), y=list(by), mode="markers", name="買入訊號 ▲",
-            marker=dict(color="#fb923c", size=9, symbol="triangle-up",
-                        line=dict(color="white", width=1))
+    if run_btn:
+        selected_periods = {p: PERIOD_MAP[p] for p in periods if p in PERIOD_MAP}
+        if not selected_periods:
+            st.warning("請至少選擇一個持有期間")
+            st.stop()
+
+        with st.spinner("📡 從 Yahoo Finance 載入資料（最多重試3次）..."):
+            sp500  = load_data(signal_ticker, start_date)
+            target = load_data(ticker_input, start_date)
+
+        if sp500 is None:
+            st.error("❌ 無法載入 S&P 500 資料。Yahoo Finance 可能暫時限流，稍後 10 秒再按「開始回測」重試。")
+            st.stop()
+        if target is None:
+            st.error(f"❌ 找不到代號「{ticker_input}」。美股直接輸入代號（SPY），台股請加 .TW（0050.TW）")
+            st.stop()
+
+        buy_dates   = find_buy_signals(sp500, drop_pct, lookback_window)
+        df_results  = calc_returns(target, buy_dates, selected_periods)
+        valid_df    = df_results.dropna(subset=list(selected_periods.keys()), how="all")
+        period_cols = [p for p in selected_periods if p in valid_df.columns]
+
+        if valid_df.empty or not period_cols:
+            st.warning("觸發訊號後資料不足，請縮短持有期或調整條件。")
+            st.stop()
+
+        # ✅ 把所有結果存進 session_state，selectbox 切換時不會消失
+        st.session_state["result"] = {
+            "valid_df":      valid_df,
+            "period_cols":   period_cols,
+            "sp500":         sp500,
+            "buy_dates":     buy_dates,
+            "ticker":        ticker_input,
+            "signal_ticker": signal_ticker,
+            "signal_name":   signal_name,
+            "drop_pct":      drop_pct,
+            "lookback":      lookback_window,
+            "start_year":    start_year,
+        }
+
+    # ─── 顯示結果（從 session_state 讀取，不依賴 run_btn）────────────────────────
+    if "result" in st.session_state:
+        R            = st.session_state["result"]
+        valid_df     = R["valid_df"]
+        period_cols  = R["period_cols"]
+        sp500        = R["sp500"]
+        buy_dates    = R["buy_dates"]
+        ticker_input  = R["ticker"]
+        signal_ticker = R.get("signal_ticker", "^GSPC")
+        signal_name   = R.get("signal_name", "S&P 500")
+        drop_pct      = R["drop_pct"]
+        lookback_window = R["lookback"]
+        start_year    = R["start_year"]
+        n_signals    = len(valid_df)
+
+        # ── 標題 ────────────────────────────────────────────────────────────────
+        st.markdown(f"""
+        <div class="result-header">
+            📊 {signal_name} 從 {lookback_window} 日高點跌 {drop_pct}% → 買入 <b>{ticker_input}</b>
+            &nbsp;｜&nbsp; 歷史共觸發 <b>{n_signals}</b> 次
+        </div>""", unsafe_allow_html=True)
+
+        # ── 卡片 ────────────────────────────────────────────────────────────────
+        st.subheader("📈 各持有期平均報酬率")
+        cards_html = '<div class="cards-row">'
+        for period in period_cols:
+            col_data = valid_df[period].dropna()
+            avg      = col_data.mean()
+            win_rate = (col_data > 0).mean() * 100
+            cls      = "pos" if avg >= 0 else "neg"
+            sign     = "+" if avg >= 0 else ""
+            cards_html += f"""
+            <div class="mcard">
+                <div class="mcard-label">{period}</div>
+                <div class="mcard-value {cls}">{sign}{avg:.1f}%</div>
+                <div class="mcard-sub">勝率 {win_rate:.0f}%<br>{len(col_data)} 筆</div>
+            </div>"""
+        cards_html += '</div>'
+        st.markdown(cards_html, unsafe_allow_html=True)
+
+        # ── Insight ──────────────────────────────────────────────────────────────
+        best_p  = max(period_cols, key=lambda p: valid_df[p].dropna().mean())
+        best_v  = valid_df[best_p].dropna().mean()
+        best_wr = (valid_df[best_p].dropna() > 0).mean() * 100
+        first_p = period_cols[0]
+        first_v = valid_df[first_p].dropna().mean()
+        st.markdown(f"""
+        <div class="insight-box">
+        💡 <b>數據洞察</b>：{start_year} 年以來，每當 {signal_name} 從高點下跌 {drop_pct}%，
+        買入 <b>{ticker_input}</b> 並持有 <b>{best_p}</b>，平均報酬達 <b>{best_v:+.1f}%</b>，勝率 <b>{best_wr:.0f}%</b>。
+        即使只持有 {first_p}，平均也有 <b>{first_v:+.1f}%</b>。
+        </div>""", unsafe_allow_html=True)
+
+        st.markdown("---")
+
+        # ════════════════════════════════════════════════════════════════════════
+        # 圖 1：各持有期 平均報酬 + 勝率 雙柱狀圖
+        # ════════════════════════════════════════════════════════════════════════
+        st.subheader("🎯 各持有期勝率與平均報酬")
+        st.caption("藍柱 = 平均報酬率（左軸）；橘柱 = 勝率（右軸）")
+
+        wr_vals  = [(valid_df[p].dropna() > 0).mean() * 100 for p in period_cols]
+        avg_vals = [valid_df[p].dropna().mean() for p in period_cols]
+
+        fig_bars = go.Figure()
+        fig_bars.add_trace(go.Bar(
+            x=period_cols, y=avg_vals, name="平均報酬率",
+            marker_color=["#34d399" if v >= 0 else "#f87171" for v in avg_vals],
+            marker_line_width=0,
+            text=[f"{v:+.1f}%" for v in avg_vals],
+            textposition="outside",
+            textfont=dict(color="white", size=11),
+            yaxis="y1"
         ))
-    fig_sp.update_layout(
-        template="plotly_dark", paper_bgcolor="#111827", plot_bgcolor="#111827",
-        font=dict(family="Noto Sans TC", color="#e5e7eb"),
-        yaxis=dict(title=f"{signal_name} 指數", gridcolor="#1f2937"),
-        xaxis=dict(gridcolor="#1f2937"),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, bgcolor="rgba(0,0,0,0)"),
-        height=380, margin=dict(t=40, b=40)
-    )
-    st.plotly_chart(fig_sp, use_container_width=True)
+        fig_bars.add_trace(go.Bar(
+            x=period_cols, y=wr_vals, name="勝率",
+            marker_color="rgba(251,146,60,0.75)",
+            marker_line_width=0,
+            text=[f"{v:.0f}%" for v in wr_vals],
+            textposition="outside",
+            textfont=dict(color="white", size=11),
+            yaxis="y2"
+        ))
+        fig_bars.update_layout(
+            template="plotly_dark", paper_bgcolor="#111827", plot_bgcolor="#111827",
+            font=dict(family="Noto Sans TC", color="#e5e7eb"),
+            barmode="group",
+            yaxis=dict(title="平均報酬率 (%)", gridcolor="#1f2937", side="left"),
+            yaxis2=dict(title="勝率 (%)", overlaying="y", side="right",
+                        range=[0, 130], showgrid=False),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, bgcolor="rgba(0,0,0,0)"),
+            height=420, margin=dict(t=50, b=40)
+        )
+        st.plotly_chart(fig_bars, use_container_width=True)
 
-    st.markdown("---")
+        # ════════════════════════════════════════════════════════════════════════
+        # 圖 2：每次觸發柱狀圖
+        # ════════════════════════════════════════════════════════════════════════
+        best_bar_p = "1年" if "1年" in period_cols else period_cols[-1]
+        st.subheader(f"📅 每次觸發後持有 {best_bar_p} 的報酬")
 
-    # ── 統計摘要表 ──────────────────────────────────────────────────────────
-    st.subheader("📊 統計摘要")
-    summary_rows = []
-    for period in period_cols:
-        col_data = valid_df[period].dropna()
-        if col_data.empty: continue
-        summary_rows.append({
-            "持有期":   period,
-            "樣本數":   len(col_data),
-            "平均報酬": f"{col_data.mean():+.1f}%",
-            "中位數":   f"{col_data.median():+.1f}%",
-            "最佳":     f"{col_data.max():+.1f}%",
-            "最差":     f"{col_data.min():+.1f}%",
-            "勝率":     f"{(col_data > 0).mean()*100:.0f}%",
-            "標準差":   f"{col_data.std():.1f}%",
-        })
-    st.dataframe(pd.DataFrame(summary_rows), use_container_width=True, hide_index=True)
+        chart_df   = valid_df[["買入日期", best_bar_p]].dropna().copy()
+        bar_colors = ["#34d399" if v >= 0 else "#f87171" for v in chart_df[best_bar_p]]
+        avg_line   = chart_df[best_bar_p].mean()
 
-    # ════════════════════════════════════════════════════════════════════════
-    # 圖 4：常態分配（selectbox 在這裡，切換不會閃退）
-    # ════════════════════════════════════════════════════════════════════════
-    st.markdown("---")
-    st.subheader("🔔 報酬率常態分配圖")
-    st.caption("橘色直方圖 = 實際歷史分佈；藍線 = 理論常態曲線；陰影 = ±1σ / ±2σ 機率區間")
+        fig_bar = go.Figure(go.Bar(
+            x=chart_df["買入日期"], y=chart_df[best_bar_p],
+            marker_color=bar_colors, marker_line_width=0,
+            hovertemplate="買入日：%{x}<br>報酬：%{y:+.1f}%<extra></extra>"
+        ))
+        fig_bar.add_hline(y=0, line_color="#6b7280", line_width=1)
+        fig_bar.add_hline(y=avg_line, line_color="#facc15", line_dash="dash", line_width=1.5,
+                          annotation_text=f"平均 {avg_line:+.1f}%",
+                          annotation_font_color="#facc15", annotation_position="top left")
+        fig_bar.update_layout(
+            template="plotly_dark", paper_bgcolor="#111827", plot_bgcolor="#111827",
+            font=dict(family="Noto Sans TC", color="#e5e7eb"),
+            yaxis=dict(title=f"{best_bar_p}報酬率(%)", gridcolor="#1f2937"),
+            xaxis=dict(gridcolor="#1f2937"),
+            height=400, margin=dict(t=40, b=60)
+        )
+        st.plotly_chart(fig_bar, use_container_width=True)
 
-    # selectbox 放在結果區塊內，session_state 保住資料後切換不會跳回首頁
-    default_idx = min(3, len(period_cols)-1)
-    dist_period = st.selectbox(
-        "選擇要查看的持有期",
-        options=period_cols,
-        index=default_idx,
-        key="dist_period"
-    )
+        # ════════════════════════════════════════════════════════════════════════
+        # 圖 3：S&P 500 走勢 + 買入訊號
+        # ════════════════════════════════════════════════════════════════════════
+        st.subheader(f"📉 {signal_name} 走勢與買入訊號點")
+        buy_pts = []
+        for d in buy_dates:
+            future = [x for x in sp500.index if x >= d]
+            if future:
+                bd = future[0]
+                buy_pts.append((bd, float(sp500.loc[bd])))
 
-    fig_dist, mu, sigma, n = draw_normal_dist(valid_df, dist_period, period_cols)
-    st.plotly_chart(fig_dist, use_container_width=True)
+        fig_sp = go.Figure()
+        fig_sp.add_trace(go.Scatter(
+            x=sp500.index, y=sp500.values, mode="lines", name=signal_name,
+            line=dict(color="#60a5fa", width=1.5),
+            fill="tozeroy", fillcolor="rgba(96,165,250,0.05)"
+        ))
+        if buy_pts:
+            bx, by = zip(*buy_pts)
+            fig_sp.add_trace(go.Scatter(
+                x=list(bx), y=list(by), mode="markers", name="買入訊號 ▲",
+                marker=dict(color="#fb923c", size=9, symbol="triangle-up",
+                            line=dict(color="white", width=1))
+            ))
+        fig_sp.update_layout(
+            template="plotly_dark", paper_bgcolor="#111827", plot_bgcolor="#111827",
+            font=dict(family="Noto Sans TC", color="#e5e7eb"),
+            yaxis=dict(title=f"{signal_name} 指數", gridcolor="#1f2937"),
+            xaxis=dict(gridcolor="#1f2937"),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, bgcolor="rgba(0,0,0,0)"),
+            height=380, margin=dict(t=40, b=40)
+        )
+        st.plotly_chart(fig_sp, use_container_width=True)
 
-    p_positive = (valid_df[dist_period].dropna() > 0).mean() * 100
-    st.markdown(f"""
-    <div class="insight-box">
-    <b>📐 {dist_period} 統計解讀（共 {n} 筆）</b><br><br>
-    平均報酬 μ = <b>{mu:+.1f}%</b>&nbsp;&nbsp;｜&nbsp;&nbsp;標準差 σ = <b>{sigma:.1f}%</b><br><br>
-    🔵 <b>±1σ（約68%機率）</b>：報酬落在 <b>{mu-sigma:+.1f}% ～ {mu+sigma:+.1f}%</b><br>
-    🔷 <b>±2σ（約95%機率）</b>：報酬落在 <b>{mu-2*sigma:+.1f}% ～ {mu+2*sigma:+.1f}%</b><br><br>
-    ✅ <b>歷史實際正報酬機率（勝率）：{p_positive:.0f}%</b>
-    </div>""", unsafe_allow_html=True)
+        st.markdown("---")
 
-    st.markdown("---")
+        # ── 統計摘要表 ──────────────────────────────────────────────────────────
+        st.subheader("📊 統計摘要")
+        summary_rows = []
+        for period in period_cols:
+            col_data = valid_df[period].dropna()
+            if col_data.empty: continue
+            summary_rows.append({
+                "持有期":   period,
+                "樣本數":   len(col_data),
+                "平均報酬": f"{col_data.mean():+.1f}%",
+                "中位數":   f"{col_data.median():+.1f}%",
+                "最佳":     f"{col_data.max():+.1f}%",
+                "最差":     f"{col_data.min():+.1f}%",
+                "勝率":     f"{(col_data > 0).mean()*100:.0f}%",
+                "標準差":   f"{col_data.std():.1f}%",
+            })
+        st.dataframe(pd.DataFrame(summary_rows), use_container_width=True, hide_index=True)
 
-    # ── 每筆詳細（折疊）────────────────────────────────────────────────────
-    with st.expander("📋 查看每筆買入詳細紀錄"):
-        display_df = valid_df[["買入日期", "買入價格"] + period_cols].copy()
-        styled = (display_df.style
-                  .map(color_cell, subset=period_cols)
-                  .format({p: fmt_pct for p in period_cols}))
-        st.dataframe(styled, use_container_width=True, hide_index=True)
+        # ════════════════════════════════════════════════════════════════════════
+        # 圖 4：常態分配（selectbox 在這裡，切換不會閃退）
+        # ════════════════════════════════════════════════════════════════════════
+        st.markdown("---")
+        st.subheader("🔔 報酬率常態分配圖")
+        st.caption("橘色直方圖 = 實際歷史分佈；藍線 = 理論常態曲線；陰影 = ±1σ / ±2σ 機率區間")
 
-    # ── 下載 ────────────────────────────────────────────────────────────────
-    csv = valid_df.to_csv(index=False, encoding="utf-8-sig")
-    st.download_button(
-        "⬇️ 下載完整回測資料（CSV）",
-        data=csv,
-        file_name=f"backtest_{ticker_input}_drop{drop_pct}pct.csv",
-        mime="text/csv"
-    )
+        # selectbox 放在結果區塊內，session_state 保住資料後切換不會跳回首頁
+        default_idx = min(3, len(period_cols)-1)
+        dist_period = st.selectbox(
+            "選擇要查看的持有期",
+            options=period_cols,
+            index=default_idx,
+            key="dist_period"
+        )
 
-# ─── 說明頁（尚未回測）──────────────────────────────────────────────────────
-else:
-    st.info("👈 請在左側設定條件，點擊「開始回測」查看結果")
-    st.markdown("""
-### 🗺️ 使用說明
-1. **輸入買入標的代號**：SPY、QQQ、AAPL、0050.TW...
-2. **設定觸發標的代號**：預設 `^GSPC`（S&P 500），可換成任何標的
-3. **設定跌幅門檻**：觸發標的從近期高點下跌幾 % 時買入
-3. **高點回看窗口**：建議 90 日（約 4 個月）
-4. **起始年份**：越早資料越多，統計越可靠
-5. **持有期**：選你想觀察的時間
-6. 點 **開始回測** ✅
+        fig_dist, mu, sigma, n = draw_normal_dist(valid_df, dist_period, period_cols)
+        st.plotly_chart(fig_dist, use_container_width=True)
 
-### 📌 常見代號
-| 類型 | 代號 | 說明 |
-|------|------|------|
-| ETF | SPY | 標普500 ETF |
-| ETF | QQQ | 那斯達克100 |
-| ETF | VT | 全球股市 |
-| ETF | GLD | 黃金 |
-| 股票 | AAPL | 蘋果 |
-| 股票 | MSFT | 微軟 |
-| 台股 | 0050.TW | 元大台灣50 |
+        p_positive = (valid_df[dist_period].dropna() > 0).mean() * 100
+        st.markdown(f"""
+        <div class="insight-box">
+        <b>📐 {dist_period} 統計解讀（共 {n} 筆）</b><br><br>
+        平均報酬 μ = <b>{mu:+.1f}%</b>&nbsp;&nbsp;｜&nbsp;&nbsp;標準差 σ = <b>{sigma:.1f}%</b><br><br>
+        🔵 <b>±1σ（約68%機率）</b>：報酬落在 <b>{mu-sigma:+.1f}% ～ {mu+sigma:+.1f}%</b><br>
+        🔷 <b>±2σ（約95%機率）</b>：報酬落在 <b>{mu-2*sigma:+.1f}% ～ {mu+2*sigma:+.1f}%</b><br><br>
+        ✅ <b>歷史實際正報酬機率（勝率）：{p_positive:.0f}%</b>
+        </div>""", unsafe_allow_html=True)
 
-> ⚠️ 資料來源：Yahoo Finance（免費）。偶爾被限流，若載入失敗稍等 10 秒再按即可。
-""")
+        st.markdown("---")
+
+        # ── 每筆詳細（折疊）────────────────────────────────────────────────────
+        with st.expander("📋 查看每筆買入詳細紀錄"):
+            display_df = valid_df[["買入日期", "買入價格"] + period_cols].copy()
+            styled = (display_df.style
+                      .map(color_cell, subset=period_cols)
+                      .format({p: fmt_pct for p in period_cols}))
+            st.dataframe(styled, use_container_width=True, hide_index=True)
+
+        # ── 下載 ────────────────────────────────────────────────────────────────
+        csv = valid_df.to_csv(index=False, encoding="utf-8-sig")
+        st.download_button(
+            "⬇️ 下載完整回測資料（CSV）",
+            data=csv,
+            file_name=f"backtest_{ticker_input}_drop{drop_pct}pct.csv",
+            mime="text/csv"
+        )
+
+    # ─── 說明頁（尚未回測）──────────────────────────────────────────────────────
+    else:
+        st.info("👈 請在左側設定條件，點擊「開始回測」查看結果")
+        st.markdown("""
+    ### 🗺️ 使用說明
+    1. **輸入買入標的代號**：SPY、QQQ、AAPL、0050.TW...
+    2. **設定觸發標的代號**：預設 `^GSPC`（S&P 500），可換成任何標的
+    3. **設定跌幅門檻**：觸發標的從近期高點下跌幾 % 時買入
+    3. **高點回看窗口**：建議 90 日（約 4 個月）
+    4. **起始年份**：越早資料越多，統計越可靠
+    5. **持有期**：選你想觀察的時間
+    6. 點 **開始回測** ✅
+
+    ### 📌 常見代號
+    | 類型 | 代號 | 說明 |
+    |------|------|------|
+    | ETF | SPY | 標普500 ETF |
+    | ETF | QQQ | 那斯達克100 |
+    | ETF | VT | 全球股市 |
+    | ETF | GLD | 黃金 |
+    | 股票 | AAPL | 蘋果 |
+    | 股票 | MSFT | 微軟 |
+    | 台股 | 0050.TW | 元大台灣50 |
+
+    > ⚠️ 資料來源：Yahoo Finance（免費）。偶爾被限流，若載入失敗稍等 10 秒再按即可。
+    """)
