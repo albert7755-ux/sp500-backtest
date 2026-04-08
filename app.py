@@ -237,8 +237,10 @@ tab1, tab2 = st.tabs(["📉 跌幅後買入回測", "📊 不同時期走勢比�
 # TAB 2：走勢比較（獨立，不依賴回測結果）
 # ════════════════════════════════════════════════════════════════════════════
 with tab2:
+    st.markdown("<div style='margin-top: 20px'></div>", unsafe_allow_html=True)
     st.subheader("📊 同一標的不同時期走勢比較")
     st.caption("將各時期走勢對齊到起跌點（0%），直觀比較跌幅與反彈速度")
+    st.markdown("<div style='margin-bottom: 16px'></div>", unsafe_allow_html=True)
 
     col_l, col_r = st.columns([1, 2])
     with col_l:
